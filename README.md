@@ -25,6 +25,18 @@ npm start
 
 The server will start on `http://localhost:3000` (or the port specified by the `PORT` environment variable). You can access the default route at `http://localhost:3000/`.
 
+## Seeding Data
+
+The project includes a seed script to populate the database with initial sample data, including users and documents. This is useful for development and testing purposes.
+
+To run the seed script, use the following command:
+
+```bash
+npm run seed
+```
+
+This command will execute the `prisma/seed.js` script, which connects to the database, creates sample records, and then disconnects. Make sure your database server is running and accessible before executing the seed command.
+
 ## CORS Configuration
 
 CORS is enabled for all routes by default using the `cors` middleware.
