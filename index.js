@@ -1,25 +1,27 @@
 const express = require('express');
-const cors = require('cors');
-const authRoutes = require('./authRoutes'); // Import auth routes
-
 const app = express();
-const port = process.env.PORT || 3000;
+const userRoutes = require('./userRoutes'); // Path should be correct
 
-// Enable CORS for all routes
-app.use(cors());
+// Middleware to parse JSON request bodies
+app.use(express.json());
 
-// Middleware to parse JSON bodies
-app.use(express.json()); // Add this before route handlers
-
-// Mount authentication routes
-app.use('/auth', authRoutes); // Add this
-
-// Define a simple route
+// Simple root route
 app.get('/', (req, res) => {
-  res.send('Hello World!');
+  res.send('API Running');
 });
 
-// Start the server
-app.listen(port, () => {
-  console.log(`Server listening at http://localhost:${port}`);
+// Mount user routes
+app.use('/api/users', userRoutes);
+
+// Basic error handling middleware
+// This should be defined after all other app.use() and routes calls
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).send('Something broke!');
+});
+
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 });
