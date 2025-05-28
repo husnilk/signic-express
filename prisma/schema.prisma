@@ -14,4 +14,25 @@ model User {
   id        Int      @id @default(autoincrement())
   email     String   @unique
   password  String
+  documentsUploaded Document[] @relation("Uploader")
+  documentsOwned    Document[] @relation("Owner")
+}
+
+model Document {
+  id                String    @id @default(uuid())
+  title             String
+  description       String?
+  uploader_id       Int
+  uploader          User      @relation("Uploader", fields: [uploader_id], references: [id])
+  uploaded_at       DateTime  @default(now())
+  owner_id          Int
+  owner             User      @relation("Owner", fields: [owner_id], references: [id])
+  original_filename String
+  stored_filename   String    @unique
+  storage_path      String
+  filesize          Int
+  status            String
+  original_hash     String?
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @updatedAt
 }

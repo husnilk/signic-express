@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const authRoutes = require("./routes/authRoutes"); // Import auth routes
 const userRoutes = require("./routes/userRoutes"); // Import user routes
+const documentRoutes = require('./routes/documentRoutes'); // Import document routes
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -11,10 +12,12 @@ app.use(cors());
 
 // Middleware to parse JSON bodies
 app.use(express.json()); // Add this before route handlers
+app.use(express.urlencoded({ extended: true })); // For URL-encoded data
 
 // Mount authentication routes
 // app.use("/api/auth", authRoutes); // Add this
 app.use("/api/users", userRoutes); // Mount user routes
+app.use('/api/documents', documentRoutes); // Mount document routes
 
 // Simple root route
 app.get("/", (req, res) => {
