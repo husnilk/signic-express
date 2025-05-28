@@ -1,6 +1,7 @@
-const express = require('express');
-const cors = require('cors');
-const authRoutes = require('./authRoutes'); // Import auth routes
+const express = require("express");
+const cors = require("cors");
+const authRoutes = require("./routes/authRoutes"); // Import auth routes
+const userRoutes = require("./routes/userRoutes"); // Import user routes
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -12,11 +13,19 @@ app.use(cors());
 app.use(express.json()); // Add this before route handlers
 
 // Mount authentication routes
-app.use('/auth', authRoutes); // Add this
+// app.use("/api/auth", authRoutes); // Add this
+app.use("/api/users", userRoutes); // Mount user routes
 
-// Define a simple route
-app.get('/', (req, res) => {
-  res.send('Hello World!');
+// Simple root route
+app.get("/", (req, res) => {
+  res.send("API Running");
+});
+
+// Basic error handling middleware
+// This should be defined after all other app.use() and routes calls
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).send("Something broke!");
 });
 
 // Start the server
