@@ -16,6 +16,8 @@ model User {
   password  String
   documentsUploaded Document[] @relation("Uploader")
   documentsOwned    Document[] @relation("Owner")
+  signatureRequests SignatureRequest[] @relation("Signer")
+  signatureRequestsMade SignatureRequest[] @relation("RequestedSignatures")
 }
 
 model Document {
@@ -35,4 +37,30 @@ model Document {
   original_hash     String?
   created_at        DateTime  @default(now())
   updated_at        DateTime  @updatedAt
+  signatureRequests SignatureRequest[] @relation("DocumentSignature")
+}
+
+enum SigningStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+model SignatureRequest {
+  id                   String        @id @default(uuid())
+  document_id          String
+  document             Document      @relation("DocumentSignature", fields: [document_id], references: [id])
+  signer_id            Int
+  signer               User          @relation("Signer", fields: [signer_id], references: [id])
+  requester_id         Int
+  requester            User          @relation("RequestedSignatures", fields: [requester_id], references: [id])
+  signing_status       SigningStatus @default(PENDING)
+  signing_reason       String?
+  signature_visual     String?
+  signed_document_hash String?
+  signature_cert_data  String?
+  signed_at            DateTime?
+  created_at           DateTime      @default(now())
+  updated_at           DateTime      @updatedAt
 }
