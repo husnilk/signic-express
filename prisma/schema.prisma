@@ -11,56 +11,47 @@ datasource db {
 }
 
 model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
-  password  String
-  documentsUploaded Document[] @relation("Uploader")
-  documentsOwned    Document[] @relation("Owner")
-  signatureRequests SignatureRequest[] @relation("Signer")
-  signatureRequestsMade SignatureRequest[] @relation("RequestedSignatures")
+  id                       Int                @id @default(autoincrement())
+  email                    String             @unique
+  password                 String
+  documentsUploaded        Document[]         @relation("Uploader")
+  documentsOwned           Document[]         @relation("Owner")
+  requestedSignatureRequests SignatureRequest[] @relation("Requester")
+  signedSignatureRequests  SignatureRequest[] @relation("Signer")
 }
 
 model Document {
-  id                String    @id @default(uuid())
-  title             String
-  description       String?
-  uploader_id       Int
-  uploader          User      @relation("Uploader", fields: [uploader_id], references: [id])
-  uploaded_at       DateTime  @default(now())
-  owner_id          Int
-  owner             User      @relation("Owner", fields: [owner_id], references: [id])
-  original_filename String
-  stored_filename   String    @unique
-  storage_path      String
-  filesize          Int
-  status            String
-  original_hash     String?
-  created_at        DateTime  @default(now())
-  updated_at        DateTime  @updatedAt
-  signatureRequests SignatureRequest[] @relation("DocumentSignature")
-}
-
-enum SigningStatus {
-  PENDING
-  APPROVED
-  REJECTED
-  CANCELLED
+  id                  String             @id @default(uuid())
+  title               String
+  description         String?
+  uploader_id         Int
+  uploader            User               @relation("Uploader", fields: [uploader_id], references: [id])
+  uploaded_at         DateTime           @default(now())
+  owner_id            Int
+  owner               User               @relation("Owner", fields: [owner_id], references: [id])
+  original_filename   String
+  stored_filename     String             @unique
+  storage_path        String
+  filesize            Int
+  status              String // Assuming this is document status, not signature status
+  original_hash       String?
+  created_at          DateTime           @default(now())
+  updated_at          DateTime           @updatedAt
+  signatureRequests   SignatureRequest[] @relation("DocumentSignatures")
 }
 
 model SignatureRequest {
-  id                   String        @id @default(uuid())
-  document_id          String
-  document             Document      @relation("DocumentSignature", fields: [document_id], references: [id])
-  signer_id            Int
-  signer               User          @relation("Signer", fields: [signer_id], references: [id])
-  requester_id         Int
-  requester            User          @relation("RequestedSignatures", fields: [requester_id], references: [id])
-  signing_status       SigningStatus @default(PENDING)
-  signing_reason       String?
-  signature_visual     String?
-  signed_document_hash String?
-  signature_cert_data  String?
-  signed_at            DateTime?
-  created_at           DateTime      @default(now())
-  updated_at           DateTime      @updatedAt
+  id                 Int      @id @default(autoincrement())
+  documentId         String   // Matched to Document's id type (String)
+  document           Document @relation("DocumentSignatures", fields: [documentId], references: [id])
+  requesterId        Int
+  requester          User     @relation("Requester", fields: [requesterId], references: [id])
+  signerId           Int
+  signer             User     @relation("Signer", fields: [signerId], references: [id])
+  status             String   @default("PENDING") // e.g., PENDING, APPROVED, REJECTED
+  rejectionReason    String?
+  qrCodeUrl          String? // URL encoded in the QR
+  signedDocumentPath String? // path to the signed document
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
 }

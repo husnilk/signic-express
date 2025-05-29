@@ -1,57 +1,108 @@
-const { PrismaClient, SigningStatus } = require('@prisma/client');
+const { PrismaClient } = require('@prisma/client'); // Removed SigningStatus
 const prisma = new PrismaClient();
 
-// Helper function for error responses
+// Helper function for error responses (retained as other functions might use it)
 const errorResponse = (res, statusCode, message) => {
   return res.status(statusCode).json({ error: message });
 };
 
-// Create a new signature request
-exports.createSignatureRequest = async (req, res) => {
-  const { document_id, signer_id, signing_reason } = req.body;
-  const requester_id = req.user?.id; // Assuming req.user.id is populated by auth middleware
-
-  if (!requester_id) {
-    return errorResponse(res, 401, 'User not authenticated.');
-  }
-  if (!document_id || !signer_id) {
-    return errorResponse(res, 400, 'document_id and signer_id are required.');
-  }
+/**
+ * Creates a new signature request.
+ * @param {object} req Express request object.
+ * @param {object} res Express response object.
+ */
+async function createSignatureRequest(req, res) {
+  const { documentId, signerId } = req.body;
+  const requesterId = req.user?.id; // Assuming authMiddleware adds user to req.user
 
   try {
-    // Check if the document exists and if the requester has rights to request signatures for it (e.g., is owner or uploader)
-    const document = await prisma.document.findUnique({ where: { id: document_id } });
-    if (!document) {
-      return errorResponse(res, 404, 'Document not found.');
+    // Validate requesterId
+    if (!requesterId) {
+      // Use existing errorResponse or switch to direct res.status().json()
+      return errorResponse(res, 401, 'Unauthorized. Requester ID is missing.');
     }
-    // Add authorization logic here if needed, e.g., check if requester_id is document.owner_id or document.uploader_id
 
-    const signatureRequest = await prisma.signatureRequest.create({
+    // Validate presence of inputs
+    if (!documentId || !signerId) {
+      return errorResponse(res, 400, 'documentId and signerId are required.');
+    }
+
+    // Validate input types (basic) - Prisma will also validate types on query
+    if (typeof documentId !== 'string' || typeof signerId !== 'number') {
+        return errorResponse(res, 400, 'Invalid input types. documentId must be a string, signerId must be a number.');
+    }
+    
+    if (requesterId === signerId) {
+      return errorResponse(res, 400, 'Requester cannot be the same as the signer.');
+    }
+
+    // Verify document exists
+    const document = await prisma.document.findUnique({
+      where: { id: documentId },
+    });
+    if (!document) {
+      return errorResponse(res, 404, `Document with ID ${documentId} not found.`);
+    }
+
+    // Verify signer exists
+    const signer = await prisma.user.findUnique({
+      where: { id: signerId },
+    });
+    if (!signer) {
+      return errorResponse(res, 404, `User with ID ${signerId} (signer) not found.`);
+    }
+    
+    // Verify requester exists (though req.user.id should guarantee this if auth is proper)
+    const requester = await prisma.user.findUnique({
+        where: { id: requesterId },
+    });
+    if (!requester) {
+        // This case should ideally be prevented by auth middleware
+        return errorResponse(res, 404, `User with ID ${requesterId} (requester) not found.`);
+    }
+
+    // Create the signature request
+    const newSignatureRequest = await prisma.signatureRequest.create({
       data: {
-        document_id,
-        signer_id,
-        requester_id,
-        signing_reason,
-        signing_status: SigningStatus.PENDING,
+        documentId, // camelCase
+        requesterId, // camelCase
+        signerId,    // camelCase
+        status: 'PENDING', // String status, as per current schema
       },
     });
-    res.status(201).json(signatureRequest);
+
+    return res.status(201).json(newSignatureRequest);
+
   } catch (error) {
     console.error('Error creating signature request:', error);
-    if (error.code === 'P2003') { // Foreign key constraint failed
-        if (error.meta?.field_name?.includes('document_id')) {
-            return errorResponse(res, 400, 'Invalid document_id.');
-        }
-        if (error.meta?.field_name?.includes('signer_id')) {
-            return errorResponse(res, 400, 'Invalid signer_id.');
-        }
-        if (error.meta?.field_name?.includes('requester_id')) {
-            return errorResponse(res, 400, 'Invalid requester_id.');
-        }
+    if (error.code === 'P2002') { 
+        return errorResponse(res, 409, 'Failed to create signature request due to a conflict.');
     }
-    errorResponse(res, 500, 'Failed to create signature request.');
+    if (error.code === 'P2003') { // Foreign key constraint failed
+        // This error is now less likely for documentId/signerId due to explicit checks,
+        // but good to keep for related data.
+        const fieldName = error.meta?.field_name;
+        if (typeof fieldName === 'string') {
+            if (fieldName.includes('documentId')) {
+                return errorResponse(res, 400, 'Invalid documentId.');
+            }
+            if (fieldName.includes('signerId')) {
+                return errorResponse(res, 400, 'Invalid signerId.');
+            }
+            if (fieldName.includes('requesterId')) {
+                return errorResponse(res, 400, 'Invalid requesterId.');
+            }
+        }
+         return errorResponse(res, 400, 'Invalid related data for signature request.');
+    }
+    return errorResponse(res, 500, 'An unexpected error occurred while creating the signature request.');
   }
-};
+}
+// Ensure the new function is exported if the old one was.
+// The original file uses exports.createSignatureRequest = ..., so we should match that.
+// However, my function is defined as `async function createSignatureRequest...`
+// So the export should be done after its definition.
+exports.createSignatureRequest = createSignatureRequest;
 
 // Get a signature request by ID
 exports.getSignatureRequestById = async (req, res) => {
@@ -286,3 +337,246 @@ exports.listSignatureRequests = async (req, res) => {
     errorResponse(res, 500, 'Failed to list signature requests.');
   }
 };
+
+/**
+ * Retrieves pending signature requests for the logged-in user (as signer).
+ * @param {object} req Express request object.
+ * @param {object} res Express response object.
+ */
+async function getSignatureRequests(req, res) {
+  const signerId = req.user?.id;
+
+  if (!signerId) {
+    return errorResponse(res, 401, 'User not authenticated. Signer ID is missing.');
+  }
+
+  try {
+    const signatureRequests = await prisma.signatureRequest.findMany({
+      where: {
+        signerId: signerId, // camelCase, as per current schema
+        status: 'PENDING',  // string, as per current schema
+      },
+      include: {
+        document: { // Includes all fields from Document model by default
+          select: { // Specify fields if you want to limit, e.g., title, id
+            id: true,
+            title: true,
+            original_filename: true,
+            // Do not include sensitive fields like storage_path unless necessary
+          }
+        }, 
+        requester: { // User model for the requester
+          select: { // Select only non-sensitive requester info
+            id: true,
+            email: true, // Assuming email is okay to show, adjust as needed
+            // Add other fields like name if available and appropriate
+          }
+        },
+        // Do not include 'signer' relation here as it's the current user.
+      },
+      orderBy: {
+        createdAt: 'desc', // Show newest requests first
+      },
+    });
+
+    return res.status(200).json(signatureRequests);
+
+  } catch (error) {
+    console.error('Error fetching pending signature requests:', error);
+    return errorResponse(res, 500, 'Failed to retrieve signature requests.');
+  }
+}
+exports.getSignatureRequests = getSignatureRequests;
+
+/**
+ * Rejects a pending signature request.
+ * @param {object} req Express request object.
+ * @param {object} res Express response object.
+ */
+async function rejectSignatureRequest(req, res) {
+  const { id: signatureRequestId } = req.params;
+  const { rejectionReason } = req.body;
+  const userId = req.user?.id;
+
+  if (!userId) {
+    return errorResponse(res, 401, 'User not authenticated.');
+  }
+
+  if (!signatureRequestId) {
+    return errorResponse(res, 400, 'Signature Request ID is required in URL parameters.');
+  }
+
+  if (!rejectionReason || typeof rejectionReason !== 'string' || rejectionReason.trim() === '') {
+    return errorResponse(res, 400, 'A non-empty rejectionReason is required in the request body.');
+  }
+
+  try {
+    // Attempt to parse the ID first. If it's not a valid number, Prisma will also error,
+    // but this provides a clearer error message earlier.
+    const numericSignatureRequestId = parseInt(signatureRequestId);
+    if (isNaN(numericSignatureRequestId)) {
+      return errorResponse(res, 400, `Invalid Signature Request ID format: "${signatureRequestId}". Must be an integer.`);
+    }
+
+    const signatureRequest = await prisma.signatureRequest.findUnique({
+      where: { id: numericSignatureRequestId },
+    });
+
+    if (!signatureRequest) {
+      return errorResponse(res, 404, `Signature Request with ID ${numericSignatureRequestId} not found.`);
+    }
+
+    if (signatureRequest.signerId !== userId) {
+      return errorResponse(res, 403, 'You are not authorized to reject this signature request.');
+    }
+
+    if (signatureRequest.status !== 'PENDING') {
+      return errorResponse(res, 409, `Signature request cannot be rejected. Current status: ${signatureRequest.status}.`);
+    }
+
+    const updatedSignatureRequest = await prisma.signatureRequest.update({
+      where: { id: numericSignatureRequestId },
+      data: {
+        status: 'REJECTED',
+        rejectionReason: rejectionReason.trim(),
+        // updatedAt should be handled by Prisma's @updatedAt directive
+      },
+    });
+
+    return res.status(200).json(updatedSignatureRequest);
+
+  } catch (error) {
+    console.error(`Error rejecting signature request ${signatureRequestId}:`, error);
+    // Check for Prisma's specific error code for "record not found" during an update operation
+    if (error.code === 'P2025') { 
+        return errorResponse(res, 404, `Signature Request with ID ${signatureRequestId} not found (it may have been deleted).`);
+    }
+    // General catch-all for other errors
+    return errorResponse(res, 500, 'Failed to reject signature request.');
+  }
+}
+exports.rejectSignatureRequest = rejectSignatureRequest;
+
+const fs = require('fs').promises;
+const path = require('path');
+const { generateQrCode } = require('../utils/qrCodeGenerator'); // Adjusted path
+const { embedQrCode, embedCertificate } = require('../utils/documentProcessor'); // Adjusted path
+
+// Define base paths for documents. These should be configurable and secure.
+// For this example, paths are relative to the project root.
+const ORIGINAL_DOCUMENTS_DIR = path.join(process.cwd(), 'uploads', 'documents');
+const SIGNED_DOCUMENTS_DIR = path.join(process.cwd(), 'uploads', 'signed_documents');
+
+/**
+ * Approves a pending signature request.
+ * @param {object} req Express request object.
+ * @param {object} res Express response object.
+ */
+async function approveSignatureRequest(req, res) {
+  const { id: signatureRequestIdStr } = req.params;
+  const userId = req.user?.id;
+  let signedDocPath; // To be used for potential cleanup
+
+  if (!userId) {
+    return errorResponse(res, 401, 'User not authenticated.');
+  }
+
+  const signatureRequestId = parseInt(signatureRequestIdStr);
+  if (isNaN(signatureRequestId)) {
+    return errorResponse(res, 400, `Invalid Signature Request ID format: "${signatureRequestIdStr}". Must be an integer.`);
+  }
+
+  try {
+    const signatureRequest = await prisma.signatureRequest.findUnique({
+      where: { id: signatureRequestId },
+      include: {
+        document: { // Need document details for file path and verification URL
+          select: { id: true, stored_filename: true }, // Use stored_filename for safety
+        },
+      },
+    });
+
+    if (!signatureRequest) {
+      return errorResponse(res, 404, `Signature Request with ID ${signatureRequestId} not found.`);
+    }
+
+    if (signatureRequest.signerId !== userId) {
+      return errorResponse(res, 403, 'You are not authorized to approve this signature request.');
+    }
+
+    if (signatureRequest.status !== 'PENDING') {
+      return errorResponse(res, 409, `Signature request cannot be approved. Current status: ${signatureRequest.status}.`);
+    }
+
+    if (!signatureRequest.document || !signatureRequest.document.stored_filename) {
+        return errorResponse(res, 500, 'Document information is missing in the signature request.');
+    }
+
+    const originalDocPath = path.join(ORIGINAL_DOCUMENTS_DIR, signatureRequest.document.stored_filename);
+
+    try {
+      await fs.access(originalDocPath);
+    } catch (fileAccessError) {
+      console.error(`Original document not found at path: ${originalDocPath}`, fileAccessError);
+      return errorResponse(res, 500, `Original document is missing or inaccessible. Please contact support. Ref: ${signatureRequest.id}`);
+    }
+    
+    // --- Core Logic: File operations and DB update ---
+    const signedDocFilename = `signed_${Date.now()}_${signatureRequest.document.stored_filename}`;
+    signedDocPath = path.join(SIGNED_DOCUMENTS_DIR, signedDocFilename); // Assign to outer scope for cleanup
+
+    // Construct a relative verification URL. This will be stored and used for QR code generation.
+    // It's expected to be resolved relative to the application's base URL when accessed.
+    const verificationUrl = `/verify/signature/${signatureRequest.id}`;
+
+    const qrCodeDataUri = await generateQrCode(verificationUrl);
+
+    await fs.mkdir(SIGNED_DOCUMENTS_DIR, { recursive: true });
+    await fs.copyFile(originalDocPath, signedDocPath);
+
+    // Embed QR code: embedQrCode reads from signedDocPath, modifies, returns bytes
+    const pdfBytesWithQr = await embedQrCode(signedDocPath, qrCodeDataUri);
+    await fs.writeFile(signedDocPath, pdfBytesWithQr);
+
+    // Embed certificate (placeholder)
+    await embedCertificate(signedDocPath, { 
+      signerId: userId, 
+      documentId: signatureRequest.document.id,
+      signatureRequestId: signatureRequest.id,
+      timestamp: new Date().toISOString(),
+    });
+
+    const updatedSignatureRequest = await prisma.signatureRequest.update({
+      where: { id: signatureRequestId },
+      data: {
+        status: 'APPROVED',
+        qrCodeUrl: verificationUrl, // Store the URL that was encoded
+        signedDocumentPath: signedDocPath, // Store the path to the new signed document
+        updatedAt: new Date(),
+      },
+    });
+
+    return res.status(200).json(updatedSignatureRequest);
+
+  } catch (error) {
+    console.error(`Error approving signature request ${signatureRequestId}:`, error);
+
+    // Attempt to clean up the copied file if it exists and an error occurred
+    if (signedDocPath) {
+      try {
+        await fs.unlink(signedDocPath);
+        console.log(`Cleaned up partially created signed document: ${signedDocPath}`);
+      } catch (cleanupError) {
+        console.error(`Failed to cleanup signed document ${signedDocPath}:`, cleanupError);
+        // Log this error but don't mask the original error sent to the client
+      }
+    }
+    
+    if (error.message.includes("generateQrCode") || error.message.includes("embedQrCode") || error.message.includes("embedCertificate")) {
+        return errorResponse(res, 500, `Failed during document processing stage: ${error.message}`);
+    }
+
+    return errorResponse(res, 500, 'Failed to approve signature request due to an internal server error.');
+  }
+}
+exports.approveSignatureRequest = approveSignatureRequest;
