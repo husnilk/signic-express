@@ -3,6 +3,7 @@ const cors = require("cors");
 const authRoutes = require("./routes/authRoutes"); // Import auth routes
 const userRoutes = require("./routes/userRoutes"); // Import user routes
 const documentRoutes = require('./routes/documentRoutes'); // Import document routes
+const signatureRequestRoutes = require('./routes/signatureRequestRoutes'); // Import signature request routes
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -18,6 +19,7 @@ app.use(express.urlencoded({ extended: true })); // For URL-encoded data
 // app.use("/api/auth", authRoutes); // Add this
 app.use("/api/users", userRoutes); // Mount user routes
 app.use('/api/documents', documentRoutes); // Mount document routes
+app.use('/api/signature-requests', signatureRequestRoutes); // Mount signature request routes
 
 // Simple root route
 app.get("/", (req, res) => {
