@@ -13,14 +13,19 @@ jest.mock('@prisma/client', () => {
       findUnique: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
-      count: jest.fn(), // For pagination if you implement it fully in tests
+      count: jest.fn(),
+    },
+    signatureRequest: { // Added for verifyDocumentSignature
+      findUnique: jest.fn(),
     },
   };
   return { PrismaClient: jest.fn(() => mPrismaClient) };
 });
 
-// Mock fs module
-jest.mock('fs');
+// Mock fs module - fs.promises is not used by verifyDocumentSignature directly
+jest.mock('fs'); 
+// If verifyDocumentSignature or its dependencies used fs.promises, that would need separate mocking:
+// jest.mock('fs/promises');
 
 // Mock authMiddleware
 // This mock simulates an authenticated user by adding req.user
@@ -336,6 +341,121 @@ describe('Document API Endpoints', () => {
         const response = await request(app).get('/api/documents/search?q=obscurequery');
         expect(response.status).toBe(200);
         expect(response.body).toEqual([]);
+    });
+  });
+});
+
+// Unit tests for DocumentController functions
+const { verifyDocumentSignature } = require('../controllers/documentController'); // Import specific function
+
+// Helper for Express req/res objects for unit tests
+const mockRequestUnit = (params = {}, body = {}, user = null) => ({
+  params,
+  body,
+  user,
+});
+
+const mockResponseUnit = () => {
+  const res = {};
+  res.status = jest.fn().mockReturnValue(res);
+  res.json = jest.fn().mockReturnValue(res);
+  return res;
+};
+
+describe('DocumentController Unit Tests', () => {
+  let req, res;
+
+  beforeEach(() => {
+    // jest.clearAllMocks(); // This is handled by the afterEach in the describe block above.
+    // If this new describe block had its own lifecycle needs, we could add them here.
+    // For now, assuming the global afterEach is sufficient.
+    res = mockResponseUnit();
+  });
+
+  describe('verifyDocumentSignature', () => {
+    const mockBaseSignatureRequest = {
+      id: 1,
+      updatedAt: new Date().toISOString(),
+      document: { title: 'Test Doc', original_filename: 'test.pdf' },
+      signer: { email: 'signer@example.com', name: 'Signer Name' },
+      requester: { email: 'requester@example.com', name: 'Requester Name' },
+      qrCodeUrl: '/verify/signature/1',
+    };
+
+    it('should return 200 with APPROVED request details', async () => {
+      req = mockRequestUnit({ signatureRequestId: '1' });
+      const approvedRequest = { ...mockBaseSignatureRequest, status: 'APPROVED' };
+      prisma.signatureRequest.findUnique.mockResolvedValue(approvedRequest);
+
+      await verifyDocumentSignature(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'APPROVED',
+        verificationUrlUsedInQr: mockBaseSignatureRequest.qrCodeUrl,
+        document: expect.objectContaining({ title: 'Test Doc' }),
+      }));
+    });
+
+    it('should return 200 with REJECTED request details including reason', async () => {
+      req = mockRequestUnit({ signatureRequestId: '1' });
+      const rejectedRequest = { 
+        ...mockBaseSignatureRequest, 
+        status: 'REJECTED', 
+        rejectionReason: 'Document unclear' 
+      };
+      prisma.signatureRequest.findUnique.mockResolvedValue(rejectedRequest);
+
+      await verifyDocumentSignature(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'REJECTED',
+        rejectionReason: 'Document unclear',
+      }));
+    });
+
+    it('should return 200 with PENDING request details', async () => {
+      req = mockRequestUnit({ signatureRequestId: '1' });
+      const pendingRequest = { ...mockBaseSignatureRequest, status: 'PENDING' };
+      prisma.signatureRequest.findUnique.mockResolvedValue(pendingRequest);
+
+      await verifyDocumentSignature(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'PENDING',
+      }));
+    });
+
+    it('should return 404 if SignatureRequest not found', async () => {
+      req = mockRequestUnit({ signatureRequestId: '999' });
+      prisma.signatureRequest.findUnique.mockResolvedValue(null);
+
+      await verifyDocumentSignature(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith({ error: 'Signature Request with ID 999 not found.' });
+    });
+
+    it('should return 400 if signatureRequestId is not a number', async () => {
+      req = mockRequestUnit({ signatureRequestId: 'abc' });
+      // No Prisma mock needed as validation should catch this first
+
+      await verifyDocumentSignature(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({ error: 'Invalid Signature Request ID format: "abc". Must be an integer.' });
+    });
+
+    it('should return 500 if Prisma throws an error', async () => {
+      req = mockRequestUnit({ signatureRequestId: '1' });
+      prisma.signatureRequest.findUnique.mockRejectedValue(new Error('Database error'));
+
+      await verifyDocumentSignature(req, res);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith({ error: 'Failed to verify signature request due to an internal server error.' });
     });
   });
 });

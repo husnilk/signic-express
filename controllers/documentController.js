@@ -24,6 +24,11 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage: storage });
 
+// Helper function for error responses, similar to other controllers
+const errorResponse = (res, statusCode, message) => {
+  return res.status(statusCode).json({ error: message });
+};
+
 // Controller Functions
 const uploadDocument = async (req, res) => {
   try {
@@ -200,4 +205,102 @@ module.exports = {
   deleteDocument,
   searchDocuments,
   upload // Export multer instance for use in routes
+};
+
+// --- Add verifyDocumentSignature function here ---
+
+async function verifyDocumentSignature(req, res) {
+  const { signatureRequestId: signatureRequestIdStr } = req.params;
+
+  const signatureRequestId = parseInt(signatureRequestIdStr);
+  if (isNaN(signatureRequestId)) {
+    return errorResponse(res, 400, `Invalid Signature Request ID format: "${signatureRequestIdStr}". Must be an integer.`);
+  }
+
+  try {
+    const signatureRequest = await prisma.signatureRequest.findUnique({
+      where: { id: signatureRequestId },
+      include: {
+        document: { 
+          select: { 
+            title: true, 
+            original_filename: true, 
+            // Consider adding other fields like owner_id or uploader_id if relevant for verification context
+          } 
+        },
+        signer: { 
+          select: { 
+            id: true, // It's good practice to include ID
+            email: true, 
+            // Add 'name' if your User model has it and it's appropriate to display
+          } 
+        },
+        requester: { 
+          select: { 
+            id: true,
+            email: true,
+            // Add 'name' if your User model has it
+          } 
+        },
+      },
+    });
+
+    if (!signatureRequest) {
+      return errorResponse(res, 404, `Signature Request with ID ${signatureRequestId} not found.`);
+    }
+
+    // Construct the response object
+    const verificationDetails = {
+      signatureRequestId: signatureRequest.id,
+      status: signatureRequest.status,
+      processedAt: signatureRequest.updatedAt, // Timestamp of approval/rejection
+      document: signatureRequest.document ? {
+        title: signatureRequest.document.title,
+        originalFilename: signatureRequest.document.original_filename,
+      } : null,
+      signer: signatureRequest.signer ? {
+        email: signatureRequest.signer.email,
+        // name: signatureRequest.signer.name, // Uncomment if name exists and is selected
+      } : null,
+      requester: signatureRequest.requester ? {
+        email: signatureRequest.requester.email,
+        // name: signatureRequest.requester.name, // Uncomment if name exists and is selected
+      } : null,
+    };
+
+    if (signatureRequest.status === 'REJECTED') {
+      verificationDetails.rejectionReason = signatureRequest.rejectionReason;
+    }
+    
+    if (signatureRequest.status === 'APPROVED') {
+      // For approved documents, you might want to include a way to access/verify the actual signed document.
+      // qrCodeUrl was stored with the full URL or relative path during approval.
+      verificationDetails.verificationUrlUsedInQr = signatureRequest.qrCodeUrl; 
+      // signedDocumentPath is sensitive, decide if it should be exposed or if a download link is better.
+      // For now, not exposing direct path.
+    }
+
+    return res.status(200).json(verificationDetails);
+
+  } catch (error) {
+    console.error(`Error verifying signature request ${signatureRequestId}:`, error);
+    // Check for Prisma's specific error code for "record not found" - though findUnique should handle this with returning null.
+    // This is more for mutation operations, but good to be aware of.
+    if (error.code === 'P2025') { 
+        return errorResponse(res, 404, `Error locating related data for Signature Request ${signatureRequestId}.`);
+    }
+    return errorResponse(res, 500, 'Failed to verify signature request due to an internal server error.');
+  }
+}
+
+// Add the new function to module.exports
+module.exports = {
+  uploadDocument,
+  listDocuments,
+  getDocumentById,
+  updateDocument,
+  deleteDocument,
+  searchDocuments,
+  verifyDocumentSignature, // Added new function
+  upload 
 };

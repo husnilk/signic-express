@@ -7,11 +7,17 @@ const {
   updateDocument,
   deleteDocument,
   searchDocuments,
+  verifyDocumentSignature, // Added import
   upload // Multer instance from controller
 } = require('../controllers/documentController');
 const authMiddleware = require('../authMiddleware'); // Assuming authMiddleware.js is in the parent directory
 
-// Apply authMiddleware to all document routes
+// Verification route - placed before router.use(authMiddleware) if it needs to be public.
+// For now, placing it after, so it will be protected by authMiddleware.
+// Consider if this route should be public or if auth context is useful.
+router.get('/verify/signature/:signatureRequestId', verifyDocumentSignature);
+
+// Apply authMiddleware to all document routes that follow
 router.use(authMiddleware);
 
 // Route for uploading a new document
